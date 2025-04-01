@@ -49,9 +49,10 @@ pub mod tracking_system {
         );
 
         let tracking_data = &mut ctx.accounts.tracking_data;
+        let is_new_user = tracking_data.user == Pubkey::default();
         
         // Set the user field if this is a new account
-        if tracking_data.user == Pubkey::default() {
+        if is_new_user {
             tracking_data.user = ctx.accounts.user.key();
             tracking_data.tracker_id = tracker_id;
         }
@@ -59,19 +60,52 @@ pub mod tracking_system {
         // Normalize date to midnight GMT (00:00:00)
         let normalized_date = (date / 86400) * 86400;
         
-        let track = Track {
-            date: normalized_date,
-            count,
-        };
+        // Check if we already have an entry for this date
+        let existing_index = tracking_data.tracks.iter().position(|t| t.date == normalized_date);
         
-        tracking_data.tracks.push(track);
+        if let Some(index) = existing_index {
+            // Update existing entry
+            tracking_data.tracks[index].count = count;
+        } else {
+            // Add new entry
+            let track = Track {
+                date: normalized_date,
+                count,
+            };
+            tracking_data.tracks.push(track);
+            // Sort tracks by date in descending order
+            tracking_data.tracks.sort_by(|a, b| b.date.cmp(&a.date));
+        }
 
         // Update tracker stats
         let tracker_stats = &mut ctx.accounts.tracker_stats;
-        tracker_stats.tracker_id = tracker_id;
-        tracker_stats.date = normalized_date;
-        tracker_stats.total_count += count;
-        tracker_stats.unique_users += 1;
+        if tracker_stats.tracker_id == 0 && tracker_stats.date == 0 {
+            // Initialize the account if it's new
+            tracker_stats.tracker_id = tracker_id;
+            tracker_stats.date = normalized_date;
+            tracker_stats.total_count = count;
+            tracker_stats.unique_users = 1;
+        } else {
+            // Update existing account
+            if tracker_stats.date != normalized_date {
+                // Reset stats for new date
+                tracker_stats.date = normalized_date;
+                tracker_stats.total_count = count;
+                tracker_stats.unique_users = 1;
+            } else {
+                // Update stats for existing date
+                if let Some(index) = existing_index {
+                    // If updating an existing entry, subtract the old count and add the new count
+                    tracker_stats.total_count = tracker_stats.total_count - tracking_data.tracks[index].count + count;
+                } else {
+                    // If adding a new entry, just add the count
+                    tracker_stats.total_count += count;
+                    if is_new_user {
+                        tracker_stats.unique_users += 1;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -114,6 +148,14 @@ pub mod tracking_system {
             TrackingError::InvalidTrackerId
         );
 
+        // Return zero stats if the account hasn't been initialized
+        if tracker_stats.tracker_id == 0 && tracker_stats.date == 0 {
+            return Ok(TrackerStats {
+                total_count: 0,
+                unique_users: 0,
+            });
+        }
+
         Ok(TrackerStats {
             total_count: tracker_stats.total_count,
             unique_users: tracker_stats.unique_users,
@@ -139,21 +181,49 @@ pub mod tracking_system {
         let one_day = 86400; // 24 hours in seconds
         
         // Get current date and normalize to midnight GMT
-        let mut current_date = (Clock::get()?.unix_timestamp as u64 / one_day) * one_day;
+        let current_date = (Clock::get()?.unix_timestamp as u64 / one_day) * one_day;
         
         // Sort tracks by date in descending order
         let mut sorted_tracks = tracking_data.tracks.clone();
         sorted_tracks.sort_by(|a, b| b.date.cmp(&a.date));
 
-        for track in sorted_tracks {
-            if track.date == current_date {
+        // Find the most recent date that is not in the future
+        let mut most_recent_date = None;
+        for track in sorted_tracks.iter() {
+            if track.date <= current_date {
+                most_recent_date = Some(track.date);
+                break;
+            }
+        }
+
+        // If no valid dates found, return 0
+        let most_recent_date = match most_recent_date {
+            Some(date) => date,
+            None => return Ok(0),
+        };
+
+        // If the most recent date is not today or yesterday, return 1
+        if most_recent_date < current_date - one_day {
+            return Ok(1);
+        }
+
+        // Count consecutive days from the most recent date
+        let mut expected_date = most_recent_date;
+        let mut dates = Vec::new();
+        for track in sorted_tracks.iter() {
+            if track.date <= current_date {
+                dates.push(track.date);
+            }
+        }
+        dates.sort_by(|a, b| b.cmp(a));
+
+        // Count consecutive days
+        for date in dates {
+            if date == expected_date {
                 current_streak += 1;
-                current_date -= one_day;
-            } else if track.date == current_date - one_day {
-                current_streak += 1;
-                current_date -= one_day;
+                expected_date -= one_day;
             } else {
-                break; // Streak broken
+                break;
             }
         }
 
@@ -193,7 +263,7 @@ pub struct AddTrackingData<'info> {
         init_if_needed,
         payer = user,
         space = 8 + TrackingData::LEN,
-        seeds = [b"tracking_data", user.key().as_ref(), &tracker_id.to_le_bytes()],
+        seeds = [b"tracking_data", user.key().as_ref(), &[tracker_id as u8; 13]],
         bump
     )]
     pub tracking_data: Account<'info, TrackingData>,
@@ -207,8 +277,8 @@ pub struct AddTrackingData<'info> {
         space = 8 + TrackerStatsAccount::LEN,
         seeds = [
             b"tracker_stats",
-            &tracker_id.to_le_bytes(),
-            &((date / 86400) * 86400).to_le_bytes(),
+            &[tracker_id as u8; 13],
+            &[((date / 86400) * 86400) as u8; 13],
         ],
         bump
     )]
@@ -233,8 +303,8 @@ pub struct GetTrackerStats<'info> {
     #[account(
         seeds = [
             b"tracker_stats",
-            &tracker_id.to_le_bytes(),
-            &date.to_le_bytes(),
+            &[tracker_id as u8; 13],
+            &[((date / 86400) * 86400) as u8; 13],
         ],
         bump
     )]
