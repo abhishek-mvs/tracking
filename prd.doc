@@ -1,0 +1,10 @@
+I want to create a smart contract in solana for Tracking system. These are the requirements 
+Please use anchor_lang
+1. We can have multiple tracker. Like NoSmoking, Gym/Fitness
+2. These trackers can be save in a Trackers = list<Tracker>
+3. Tracker contains 2 details Tracker = {Title: NoSmoking, Description: NoSmoking Streak}, id will index of Trackers 
+4. There will 1 Map which contains user tracking data for a Tracker, UserTrackingData = Map [UserAddress][TrackerId] = List[{Track}], Track Contains = {Date: EpochTime, Count: Number}
+5. Function 1 -> Admin can create a new tracker -> Which will append the new tracker ({Title: NoSmoking, Description: NoSmoking Streak}) to Trackers 
+6. Function 2 -> View Function -> User will get List of Trackers
+7. Function 3 -> View Function -> Fetch UserTrackingData for a UserAddress and TrackerId
+8. Function 4 -> Add Tracking Data -> Append to UserTrackingDatap[UserAddress][TrackerId], Track (Date, count)
