@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-tracking_system = "FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx"
+tracking_system = "7TBRqAzFS8FLEjHU2ppAWkU4Um8kQeBztmkLZUNjTrKB"
 
 [programs.devnet]
-tracking_system = "FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx"
+tracking_system = "7TBRqAzFS8FLEjHU2ppAWkU4Um8kQeBztmkLZUNjTrKB"
 
 [registry]
 url = "https://api.apr.dev"

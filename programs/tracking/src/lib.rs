@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx");
+declare_id!("7TBRqAzFS8FLEjHU2ppAWkU4Um8kQeBztmkLZUNjTrKB");
 
 #[program]
 pub mod tracking_system {
@@ -131,7 +131,7 @@ pub mod tracking_system {
                 return Ok(());
             }
 
-            if normalized_date == last_date + one_day {
+            if normalized_date == last_date + one_day  && count > 0{
                 // Next day, increment streak
                 tracker_streak.streak += 1;
                 if tracker_streak.streak > tracker_streak.longest_streak {
