@@ -205,13 +205,21 @@ pub mod tracking_system {
     pub fn get_user_streak(
         ctx: Context<GetUserStreak>,
         tracker_id: u32,
-    ) -> Result<u32> {
+    ) -> Result<TrackerStreakAccount> {
         require!(
             ctx.accounts.tracker_streak.tracker_id == tracker_id,
             TrackingError::InvalidTrackerId
         );
 
-        Ok(ctx.accounts.tracker_streak.streak)
+        let streak_account = TrackerStreakAccount {
+            tracker_id: ctx.accounts.tracker_streak.tracker_id,
+            user: ctx.accounts.tracker_streak.user,
+            streak: ctx.accounts.tracker_streak.streak,
+            last_streak_date: ctx.accounts.tracker_streak.last_streak_date,
+            longest_streak: ctx.accounts.tracker_streak.longest_streak,
+            longest_streak_date: ctx.accounts.tracker_streak.longest_streak_date,
+        };
+        Ok(streak_account)
     }
 }
 
