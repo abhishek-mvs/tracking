@@ -6,13 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-tracking_system = "JA4h4mXLJqS58esaLa1xS3HY9EQSFSrzijGfMB2ZJBGr"
+tracking_system = "FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx"
+
+[programs.devnet]
+tracking_system = "FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

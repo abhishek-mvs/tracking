@@ -1,38 +1,41 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::clock::Clock;
 
-declare_id!("JA4h4mXLJqS58esaLa1xS3HY9EQSFSrzijGfMB2ZJBGr");
+declare_id!("FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx");
 
 #[program]
 pub mod tracking_system {
     use super::*;
 
-    // Initialize the program state
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let program_state = &mut ctx.accounts.program_state;
-        program_state.authority = ctx.accounts.authority.key();
-        program_state.trackers = Vec::new();
+    // Initialize the tracker registry (any user can do this)
+    pub fn initialize(
+        ctx: Context<Initialize>,
+    ) -> Result<()> {
+        // Initialize the registry with an empty vector of tracker names
+        ctx.accounts.tracker_registry.set_inner(TrackerRegistry::default());
+        
         Ok(())
     }
 
-    // Create a new tracker (Admin only)
+    // Create a new tracker (any user can do this)
     pub fn create_tracker(
         ctx: Context<CreateTracker>,
         title: String,
         description: String,
     ) -> Result<()> {
-        require!(
-            ctx.accounts.authority.key() == ctx.accounts.program_state.authority,
-            TrackingError::Unauthorized
-        );
-
-        let program_state = &mut ctx.accounts.program_state;
+        // Create a new tracker with the provided title and description
         let tracker = Tracker {
-            id: program_state.trackers.len() as u32,
-            title,
+            id: ctx.accounts.tracker.key().to_bytes()[0] as u32, // Use first byte of PDA as ID
+            title: title.clone(),
             description,
         };
-        program_state.trackers.push(tracker);
+        
+        // Store the tracker in the PDA
+        ctx.accounts.tracker.set_inner(tracker.clone());
+        
+        // Add the tracker name to the registry
+        ctx.accounts.tracker_registry.tracker_names.push(title);
+        
         Ok(())
     }
 
@@ -43,8 +46,9 @@ pub mod tracking_system {
         count: u32,
         date: u64,
     ) -> Result<()> {
+        // Verify the tracker exists and matches the ID
         require!(
-            tracker_id < ctx.accounts.program_state.trackers.len() as u32,
+            ctx.accounts.tracker.id == tracker_id,
             TrackingError::InvalidTrackerId
         );
 
@@ -77,7 +81,7 @@ pub mod tracking_system {
             tracking_data.tracks.sort_by(|a, b| b.date.cmp(&a.date));
         }
 
-        // Update tracker stats
+        // Update tracker stats for today
         let tracker_stats = &mut ctx.accounts.tracker_stats;
         if tracker_stats.tracker_id == 0 && tracker_stats.date == 0 {
             // Initialize the account if it's new
@@ -110,9 +114,9 @@ pub mod tracking_system {
         Ok(())
     }
 
-    // View function to get list of all trackers
-    pub fn get_trackers(ctx: Context<GetTrackers>) -> Result<Vec<Tracker>> {
-        Ok(ctx.accounts.program_state.trackers.clone())
+    // View function to get all tracker names
+    pub fn get_all_trackers(ctx: Context<GetAllTrackers>) -> Result<Vec<String>> {
+        Ok(ctx.accounts.tracker_registry.tracker_names.clone())
     }
 
     // View function to get user tracking data for a specific tracker
@@ -121,7 +125,7 @@ pub mod tracking_system {
         tracker_id: u32,
     ) -> Result<Vec<Track>> {
         require!(
-            tracker_id < ctx.accounts.program_state.trackers.len() as u32,
+            ctx.accounts.tracking_data.tracker_id == tracker_id,
             TrackingError::InvalidTrackerId
         );
         
@@ -135,7 +139,7 @@ pub mod tracking_system {
         date: u64,
     ) -> Result<TrackerStats> {
         require!(
-            tracker_id < ctx.accounts.program_state.trackers.len() as u32,
+            ctx.accounts.tracker_stats.tracker_id == tracker_id,
             TrackingError::InvalidTrackerId
         );
 
@@ -144,7 +148,7 @@ pub mod tracking_system {
 
         let tracker_stats = &ctx.accounts.tracker_stats;
         require!(
-            tracker_stats.tracker_id == tracker_id && tracker_stats.date == normalized_date,
+            tracker_stats.date == normalized_date,
             TrackingError::InvalidTrackerId
         );
 
@@ -168,15 +172,11 @@ pub mod tracking_system {
         tracker_id: u32,
     ) -> Result<u32> {
         require!(
-            tracker_id < ctx.accounts.program_state.trackers.len() as u32,
+            ctx.accounts.tracking_data.tracker_id == tracker_id,
             TrackingError::InvalidTrackerId
         );
 
         let tracking_data = &ctx.accounts.tracking_data;
-        if tracking_data.tracker_id != tracker_id {
-            return Ok(0);
-        }
-
         let mut current_streak = 0;
         let one_day = 86400; // 24 hours in seconds
         
@@ -222,7 +222,8 @@ pub mod tracking_system {
             if date == expected_date {
                 current_streak += 1;
                 expected_date -= one_day;
-            } else {
+            } else if date < expected_date - one_day {
+                // If there's a gap of more than one day, break the streak
                 break;
             }
         }
@@ -235,25 +236,44 @@ pub mod tracking_system {
 pub struct Initialize<'info> {
     #[account(
         init,
-        payer = authority,
-        space = 8 + ProgramState::LEN,
-        seeds = [b"program_state"],
+        payer = user,
+        space = 8 + TrackerRegistry::LEN,
+        seeds = [b"tracker_registry"],
         bump
     )]
-    pub program_state: Account<'info, ProgramState>,
+    pub tracker_registry: Account<'info, TrackerRegistry>,
     
+    /// CHECK: This is the user who is initializing the registry
     #[account(mut)]
-    pub authority: Signer<'info>,
+    pub user: Signer<'info>,
     
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
+#[instruction(title: String)]
 pub struct CreateTracker<'info> {
-    #[account(mut)]
-    pub program_state: Account<'info, ProgramState>,
+    #[account(
+        init,
+        payer = user,
+        space = 8 + Tracker::LEN,
+        seeds = [b"tracker", title.as_bytes()],
+        bump
+    )]
+    pub tracker: Account<'info, Tracker>,
     
-    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"tracker_registry"],
+        bump
+    )]
+    pub tracker_registry: Account<'info, TrackerRegistry>,
+    
+    /// CHECK: This is the user who is creating the tracker
+    #[account(mut)]
+    pub user: Signer<'info>,
+    
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -267,10 +287,19 @@ pub struct AddTrackingData<'info> {
         bump
     )]
     pub tracking_data: Account<'info, TrackingData>,
+    
+    #[account(
+        seeds = [b"tracker", tracker.title.as_bytes()],
+        bump
+    )]
+    pub tracker: Account<'info, Tracker>,
+    
+    /// CHECK: This is the user who is adding tracking data
     #[account(mut)]
     pub user: Signer<'info>,
-    pub program_state: Account<'info, ProgramState>,
+    
     pub system_program: Program<'info, System>,
+    
     #[account(
         init_if_needed,
         payer = user,
@@ -286,20 +315,29 @@ pub struct AddTrackingData<'info> {
 }
 
 #[derive(Accounts)]
-pub struct GetTrackers<'info> {
-    pub program_state: Account<'info, ProgramState>,
+pub struct GetAllTrackers<'info> {
+    #[account(
+        seeds = [b"tracker_registry"],
+        bump
+    )]
+    pub tracker_registry: Account<'info, TrackerRegistry>,
 }
 
 #[derive(Accounts)]
+#[instruction(tracker_id: u32)]
 pub struct GetUserTrackingData<'info> {
-    pub program_state: Account<'info, ProgramState>,
+    #[account(
+        seeds = [b"tracking_data", user.key().as_ref(), &[tracker_id as u8; 13]],
+        bump
+    )]
     pub tracking_data: Account<'info, TrackingData>,
+    /// CHECK: This is the user whose tracking data we're retrieving
+    pub user: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
 #[instruction(tracker_id: u32, date: u64)]
 pub struct GetTrackerStats<'info> {
-    pub program_state: Account<'info, ProgramState>,
     #[account(
         seeds = [
             b"tracker_stats",
@@ -309,18 +347,23 @@ pub struct GetTrackerStats<'info> {
         bump
     )]
     pub tracker_stats: Account<'info, TrackerStatsAccount>,
+    #[account(
+        seeds = [b"tracker", tracker.title.as_bytes()],
+        bump
+    )]
+    pub tracker: Account<'info, Tracker>,
 }
 
 #[derive(Accounts)]
+#[instruction(tracker_id: u32)]
 pub struct GetUserStreak<'info> {
-    pub program_state: Account<'info, ProgramState>,
+    #[account(
+        seeds = [b"tracking_data", user.key().as_ref(), &[tracker_id as u8; 13]],
+        bump
+    )]
     pub tracking_data: Account<'info, TrackingData>,
-}
-
-#[account]
-pub struct ProgramState {
-    pub authority: Pubkey,
-    pub trackers: Vec<Tracker>,
+    /// CHECK: This is the user whose streak we're calculating
+    pub user: AccountInfo<'info>,
 }
 
 #[account]
@@ -330,11 +373,29 @@ pub struct TrackingData {
     pub tracks: Vec<Track>,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+#[account]
 pub struct Tracker {
     pub id: u32,
     pub title: String,
     pub description: String,
+}
+
+#[account]
+pub struct TrackerRegistry {
+    pub tracker_names: Vec<String>,
+}
+
+impl Default for TrackerRegistry {
+    fn default() -> Self {
+        Self {
+            tracker_names: Vec::new(),
+        }
+    }
+}
+
+impl TrackerRegistry {
+    pub const LEN: usize = 4 + // tracker_names vector length
+        (4 + 32) * 100; // space for 100 tracker names initially (each name max 32 chars)
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -359,16 +420,8 @@ pub struct TrackerStatsAccount {
 
 #[error_code]
 pub enum TrackingError {
-    #[msg("Only the program authority can perform this action")]
-    Unauthorized,
     #[msg("Invalid tracker ID")]
     InvalidTrackerId,
-}
-
-impl ProgramState {
-    pub const LEN: usize = 32 + // authority
-        4 + // trackers vector length
-        (32 + 32 + 4) * 10; // space for 10 trackers initially
 }
 
 impl TrackingData {
@@ -376,6 +429,14 @@ impl TrackingData {
         4 + // tracker_id
         4 + // tracks vector length
         (8 + 4) * 100; // space for 100 tracks initially
+}
+
+impl Tracker {
+    pub const LEN: usize = 4 + // id
+        4 + // title length
+        32 + // title (max 32 chars)
+        4 + // description length
+        100; // description (max 100 chars)
 }
 
 impl TrackerStatsAccount {

@@ -11,60 +11,104 @@ describe("tracking", () => {
 
   const program = anchor.workspace.TrackingSystem as Program<TrackingSystem>;
   
-  // Derive program state PDA
-  const [programStatePda] = PublicKey.findProgramAddressSync(
-    [new Uint8Array([112, 114, 111, 103, 114, 97, 109, 95, 115, 116, 97, 116, 101])], // "program_state" in bytes
+  // Derive tracker registry PDA
+  const [trackerRegistryPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("tracker_registry")],
     program.programId
   );
 
-  it("Initializes the program state", async () => {
-    const tx = await program.methods
+  it("Initializes the tracker registry", async () => {
+    await program.methods
       .initialize()
       .accounts({
-        programState: programStatePda,
-        authority: provider.wallet.publicKey,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
         systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
-    console.log("tx", tx);
-    const programState = await program.account.programState.fetch(programStatePda);
-    expect(programState.authority).to.eql(provider.wallet.publicKey);
-    expect(programState.trackers).to.be.an('array').that.is.empty;
+
+    const registry = await program.account.trackerRegistry.fetch(trackerRegistryPda);
+    expect(registry.trackerNames).to.have.lengthOf(0);
   });
 
   it("Creates a new tracker", async () => {
     const title = "No Smoking";
     const description = "Track your no smoking streak";
 
-    const tx = await program.methods
+    // Derive the tracker PDA
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+
+    await program.methods
       .createTracker(title, description)
       .accounts({
-        programState: programStatePda,
-        authority: provider.wallet.publicKey,
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
       })
       .rpc();
 
-    const programState = await program.account.programState.fetch(programStatePda);
-    expect(programState.trackers).to.have.lengthOf(1);
-    expect(programState.trackers[0].title).to.equal(title);
-    expect(programState.trackers[0].description).to.equal(description);
-    expect(programState.trackers[0].id).to.equal(0);
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    expect(tracker.title).to.equal(title);
+    expect(tracker.description).to.equal(description);
+    expect(tracker.id).to.equal(trackerPda.toBytes()[0]);
   });
 
-  it("Gets list of trackers", async () => {
-    const trackers = await program.methods
-      .getTrackers()
+  it("Gets list of tracker names", async () => {
+    const trackerNames = await program.methods
+      .getAllTrackers()
       .accounts({
-        programState: programStatePda,
+        trackerRegistry: trackerRegistryPda,
       })
       .view();
 
-    expect(trackers).to.have.lengthOf(1);
-    expect(trackers[0].title).to.equal("No Smoking");
+    expect(trackerNames).to.have.lengthOf(1);
+    expect(trackerNames[0]).to.equal("No Smoking");
+  });
+
+  it("Gets list of tracker names for a different user", async () => {
+    // Create a new wallet for testing
+    const otherWallet = anchor.web3.Keypair.generate();
+
+    // Create a new provider with the other wallet
+    const otherProvider = new anchor.AnchorProvider(
+      provider.connection,
+      new anchor.Wallet(otherWallet),
+      provider.opts
+    );
+
+    // Set the provider to the other wallet
+    anchor.setProvider(otherProvider);
+    
+    // Use the same program instance but with the new provider
+    const trackerNames = await program.methods
+      .getAllTrackers()
+      .accounts({
+        trackerRegistry: trackerRegistryPda,
+      })
+      .view();
+
+    // Tracker names should be the same regardless of wallet
+    expect(trackerNames).to.have.lengthOf(1);
+    expect(trackerNames[0]).to.equal("No Smoking");
+    
+    // Reset the provider back to the original
+    anchor.setProvider(provider);
   });
 
   it("Adds tracking data for a user", async () => {
-    const trackerId = 0;
+    const title = "No Smoking";
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
     const count = 5;
     const date = Math.floor(Date.now() / 1000); // Current Unix timestamp
     const normalizedDate = Math.floor(date / 86400) * 86400;
@@ -89,12 +133,12 @@ describe("tracking", () => {
       program.programId
     );
 
-    const tx = await program.methods
+    await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(date))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
       })
@@ -109,7 +153,15 @@ describe("tracking", () => {
   });
 
   it("Gets user tracking data", async () => {
-    const trackerId = 0;
+    const title = "No Smoking";
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
     const [trackingDataPda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from("tracking_data"),
@@ -122,8 +174,8 @@ describe("tracking", () => {
     const tracks = await program.methods
       .getUserTrackingData(trackerId)
       .accounts({
-        programState: programStatePda,
         trackingData: trackingDataPda,
+        user: provider.wallet.publicKey,
       })
       .view();
 
@@ -131,33 +183,17 @@ describe("tracking", () => {
     expect(tracks[0].count).to.equal(5);
   });
 
-  it("Fails to create tracker with non-authority account", async () => {
-    // Create a new wallet for testing
-    const otherWallet = anchor.web3.Keypair.generate();
-    
-    try {
-      await program.methods
-        .createTracker("Another Tracker", "Should fail")
-        .accounts({
-          programState: programStatePda,
-          authority: otherWallet.publicKey,
-        })
-        .signers([otherWallet])
-        .rpc();
-      
-      // If we get here, the test should fail
-      expect.fail("Should have thrown an error");
-    } catch (error) {
-      expect(error).to.be.instanceOf(Error);
-      expect(error.message).to.include("Unauthorized");
-    }
-  });
-
   it("Fails to add tracking data with invalid tracker ID", async () => {
     const invalidTrackerId = 999;
     const count = 5;
     const date = Math.floor(Date.now() / 1000);
     const normalizedDate = Math.floor(date / 86400) * 86400;
+    
+    // Derive a fake tracker PDA for the invalid ID
+    const [fakeTrackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from("fake_tracker")],
+      program.programId
+    );
     
     const [trackingDataPda] = PublicKey.findProgramAddressSync(
       [
@@ -182,8 +218,8 @@ describe("tracking", () => {
         .addTrackingData(invalidTrackerId, count, new anchor.BN(date))
         .accounts({
           trackingData: trackingDataPda,
+          tracker: fakeTrackerPda,
           user: provider.wallet.publicKey,
-          programState: programStatePda,
           systemProgram: anchor.web3.SystemProgram.programId,
           trackerStats: trackerStatsPda,
         })
@@ -197,7 +233,15 @@ describe("tracking", () => {
   });
 
   it("Gets tracker stats for a specific date", async () => {
-    const trackerId = 0;
+    const title = "No Smoking";
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
     const currentDate = Math.floor(Date.now() / 1000);
     const tenDays = 86400 * 10;
     const testDate = currentDate - tenDays;
@@ -237,8 +281,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTestDate))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
       })
@@ -258,8 +302,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTestDate))
       .accounts({
         trackingData: otherTrackingDataPda,
+        tracker: trackerPda,
         user: otherWallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
       })
@@ -270,8 +314,8 @@ describe("tracking", () => {
     const stats = await program.methods
       .getTrackerStats(trackerId, new anchor.BN(normalizedTestDate))
       .accounts({
-        programState: programStatePda,
         trackerStats: trackerStatsPda,
+        tracker: trackerPda,
       })
       .view();
 
@@ -280,7 +324,15 @@ describe("tracking", () => {
   });
 
   it("Gets user streak", async () => {
-    const trackerId = 0;
+    const title = "No Smoking";
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
     const currentDate = Math.floor(Date.now() / 1000);
     const oneDay = 86400;
     const normalizedCurrentDate = Math.floor(currentDate / oneDay) * oneDay;
@@ -314,8 +366,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedYesterday))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: yesterdayTrackerStatsPda,
       })
@@ -335,8 +387,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedCurrentDate))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: currentTrackerStatsPda,
       })
@@ -352,8 +404,8 @@ describe("tracking", () => {
     const streak = await program.methods
       .getUserStreak(trackerId)
       .accounts({
-        programState: programStatePda,
         trackingData: trackingDataPda,
+        user: provider.wallet.publicKey,
       })
       .view();
 
@@ -361,7 +413,15 @@ describe("tracking", () => {
   });
 
   it("Breaks streak when there's a gap", async () => {
-    const trackerId = 0;
+    const title = "No Smoking";
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
     const currentDate = Math.floor(Date.now() / 1000);
     const twoDays = 86400 * 2;
     const normalizedCurrentDate = Math.floor(currentDate / 86400) * 86400;
@@ -391,8 +451,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedCurrentDate))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: currentTrackerStatsPda,
       })
@@ -412,8 +472,8 @@ describe("tracking", () => {
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTwoDaysAgo))
       .accounts({
         trackingData: trackingDataPda,
+        tracker: trackerPda,
         user: provider.wallet.publicKey,
-        programState: programStatePda,
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: twoDaysAgoTrackerStatsPda,
       })
@@ -422,21 +482,21 @@ describe("tracking", () => {
     const streak = await program.methods
       .getUserStreak(trackerId)
       .accounts({
-        programState: programStatePda,
         trackingData: trackingDataPda,
+        user: provider.wallet.publicKey,
       })
       .view();
     
     const getUserTrackingData = await program.methods
       .getUserTrackingData(trackerId)
       .accounts({
-        programState: programStatePda,
         trackingData: trackingDataPda,
+        user: provider.wallet.publicKey,
       })
       .view();
     for (const track of getUserTrackingData) {
       console.log('track Date and Count', new Date(track.date.toNumber() * 1000).toISOString(), track.count);
     }
-    expect(streak).to.equal(3);
+    expect(streak).to.equal(1); // Streak should be 1 since there's a gap
   });
 });
