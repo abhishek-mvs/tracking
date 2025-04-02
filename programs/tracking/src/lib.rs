@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::clock::Clock;
 
 declare_id!("FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx");
 
@@ -111,6 +110,42 @@ pub mod tracking_system {
             }
         }
 
+        // Update streak information
+        let tracker_streak = &mut ctx.accounts.tracker_streak;
+        let one_day = 86400; // 24 hours in seconds
+
+        if tracker_streak.user == Pubkey::default() {
+            // Initialize streak account for new user
+            tracker_streak.user = ctx.accounts.user.key();
+            tracker_streak.tracker_id = tracker_id;
+            tracker_streak.streak = 1;
+            tracker_streak.last_streak_date = normalized_date;
+            tracker_streak.longest_streak = 1;
+            tracker_streak.longest_streak_date = normalized_date;
+        } else {
+            // Update existing streak
+            let last_date = tracker_streak.last_streak_date;
+            
+            if normalized_date == last_date {
+                // Same day, no streak change
+                return Ok(());
+            }
+
+            if normalized_date == last_date + one_day {
+                // Next day, increment streak
+                tracker_streak.streak += 1;
+                if tracker_streak.streak > tracker_streak.longest_streak {
+                    tracker_streak.longest_streak = tracker_streak.streak;
+                    tracker_streak.longest_streak_date = normalized_date;
+                }
+            } else if normalized_date > last_date + one_day {
+                // Streak broken, reset to 1
+                tracker_streak.streak = 1;
+            }
+            
+            tracker_streak.last_streak_date = normalized_date;
+        }
+
         Ok(())
     }
 
@@ -172,63 +207,11 @@ pub mod tracking_system {
         tracker_id: u32,
     ) -> Result<u32> {
         require!(
-            ctx.accounts.tracking_data.tracker_id == tracker_id,
+            ctx.accounts.tracker_streak.tracker_id == tracker_id,
             TrackingError::InvalidTrackerId
         );
 
-        let tracking_data = &ctx.accounts.tracking_data;
-        let mut current_streak = 0;
-        let one_day = 86400; // 24 hours in seconds
-        
-        // Get current date and normalize to midnight GMT
-        let current_date = (Clock::get()?.unix_timestamp as u64 / one_day) * one_day;
-        
-        // Sort tracks by date in descending order
-        let mut sorted_tracks = tracking_data.tracks.clone();
-        sorted_tracks.sort_by(|a, b| b.date.cmp(&a.date));
-
-        // Find the most recent date that is not in the future
-        let mut most_recent_date = None;
-        for track in sorted_tracks.iter() {
-            if track.date <= current_date {
-                most_recent_date = Some(track.date);
-                break;
-            }
-        }
-
-        // If no valid dates found, return 0
-        let most_recent_date = match most_recent_date {
-            Some(date) => date,
-            None => return Ok(0),
-        };
-
-        // If the most recent date is not today or yesterday, return 1
-        if most_recent_date < current_date - one_day {
-            return Ok(1);
-        }
-
-        // Count consecutive days from the most recent date
-        let mut expected_date = most_recent_date;
-        let mut dates = Vec::new();
-        for track in sorted_tracks.iter() {
-            if track.date <= current_date {
-                dates.push(track.date);
-            }
-        }
-        dates.sort_by(|a, b| b.cmp(a));
-
-        // Count consecutive days
-        for date in dates {
-            if date == expected_date {
-                current_streak += 1;
-                expected_date -= one_day;
-            } else if date < expected_date - one_day {
-                // If there's a gap of more than one day, break the streak
-                break;
-            }
-        }
-
-        Ok(current_streak)
+        Ok(ctx.accounts.tracker_streak.streak)
     }
 }
 
@@ -312,6 +295,15 @@ pub struct AddTrackingData<'info> {
         bump
     )]
     pub tracker_stats: Account<'info, TrackerStatsAccount>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        space = 8 + TrackerStreakAccount::LEN,
+        seeds = [b"tracker_streak", user.key().as_ref(), &[tracker_id as u8; 13]],
+        bump
+    )]
+    pub tracker_streak: Account<'info, TrackerStreakAccount>,
 }
 
 #[derive(Accounts)]
@@ -358,11 +350,11 @@ pub struct GetTrackerStats<'info> {
 #[instruction(tracker_id: u32)]
 pub struct GetUserStreak<'info> {
     #[account(
-        seeds = [b"tracking_data", user.key().as_ref(), &[tracker_id as u8; 13]],
+        seeds = [b"tracker_streak", user.key().as_ref(), &[tracker_id as u8; 13]],
         bump
     )]
-    pub tracking_data: Account<'info, TrackingData>,
-    /// CHECK: This is the user whose streak we're calculating
+    pub tracker_streak: Account<'info, TrackerStreakAccount>,
+    /// CHECK: This is the user whose streak we're retrieving
     pub user: AccountInfo<'info>,
 }
 
@@ -418,6 +410,17 @@ pub struct TrackerStatsAccount {
     pub unique_users: u32,
 }
 
+#[account]
+pub struct TrackerStreakAccount {
+    pub user: Pubkey,
+    pub tracker_id: u32,
+    pub streak: u32,
+    pub last_streak_date: u64,
+    pub longest_streak: u32,
+    pub longest_streak_date: u64,
+}
+
+
 #[error_code]
 pub enum TrackingError {
     #[msg("Invalid tracker ID")]
@@ -441,4 +444,13 @@ impl Tracker {
 
 impl TrackerStatsAccount {
     pub const LEN: usize = 4 + 8 + 4 + 4; // tracker_id (u32) + date (u64) + total_count (u32) + unique_users (u32)
+}
+
+impl TrackerStreakAccount {
+    pub const LEN: usize = 32 + // user (Pubkey)
+        4 + // tracker_id (u32)
+        4 + // streak (u32)
+        8 + // last_streak_date (u64)
+        4 + // longest_streak (u32)
+        8; // longest_streak_date (u64)
 }

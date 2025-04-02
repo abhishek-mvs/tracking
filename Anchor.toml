@@ -15,7 +15,7 @@ tracking_system = "FEp1TVQcRzbcYH9NEpXrdbSj5EUe9PRy6kY1yzKUMqkx"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
