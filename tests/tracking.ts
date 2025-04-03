@@ -143,6 +143,14 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(date))
       .accounts({
@@ -152,6 +160,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -242,6 +251,14 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(invalidTrackerId)),
+      ],
+      program.programId
+    );
+
     try {
       await program.methods
         .addTrackingData(invalidTrackerId, count, new anchor.BN(date))
@@ -252,6 +269,7 @@ describe("tracking", () => {
           systemProgram: anchor.web3.SystemProgram.programId,
           trackerStats: trackerStatsPda,
           trackerStreak: trackerStreakPda,
+          trackerStatsList: trackerStatsListPda,
         })
         .rpc();
       
@@ -315,6 +333,23 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [currentTrackerStatsPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats"),
+        new Uint8Array(new Array(13).fill(trackerId)),
+        new Uint8Array(new Array(13).fill(normalizedTestDate)),
+      ],
+      program.programId
+    );
+
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
     // First user adds tracking data
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTestDate))
@@ -325,6 +360,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -346,6 +382,14 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [otherTrackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
     // Second user adds tracking data
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTestDate))
@@ -356,6 +400,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
         trackerStreak: otherTrackerStreakPda,
+        trackerStatsList: otherTrackerStatsListPda,
       })
       .signers([otherWallet])
       .rpc();
@@ -385,6 +430,7 @@ describe("tracking", () => {
     
     const currentDate = Math.floor(Date.now() / 1000);
     const oneDay = 86400;
+    // Normalize to UTC midnight
     const normalizedCurrentDate = Math.floor(currentDate / oneDay) * oneDay;
     const normalizedYesterday = normalizedCurrentDate - oneDay;
     const count = 5;
@@ -417,6 +463,14 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
     // Add yesterday's tracking data first
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(normalizedYesterday))
@@ -427,6 +481,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: yesterdayTrackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -449,6 +504,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: currentTrackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -530,6 +586,14 @@ describe("tracking", () => {
       program.programId
     );
 
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
     // First add data from two days ago
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTwoDaysAfter))
@@ -540,6 +604,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: twoDaysAgoTrackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -564,6 +629,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: currentTrackerStatsPda,
         trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .rpc();
 
@@ -587,5 +653,136 @@ describe("tracking", () => {
     expect(trackerStreak.lastStreakDate.toNumber()).to.equal(normalizedCurrentDate);
     expect(trackerStreak.longestStreak).to.equal(1);
     expect(trackerStreak.longestStreakDate.toNumber()).to.equal(normalizedTwoDaysAfter);
+  });
+
+  it("Gets all tracker stats", async () => {
+    const title = "Gym Fitness";
+    const description = "Track your gym fitness";
+
+    // Derive the tracker PDA
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+
+    await program.methods
+      .createTracker(title, description)
+      .accounts({
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
+    const currentDate = Math.floor(Date.now() / 1000);
+    const oneDay = 86400;
+    // Normalize to UTC midnight
+    const normalizedCurrentDate = Math.floor(currentDate / oneDay) * oneDay;
+    const normalizedYesterday = normalizedCurrentDate - oneDay;
+    const count = 5;
+
+    // Derive PDAs
+    const [trackingDataPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracking_data"),
+        provider.wallet.publicKey.toBuffer(),
+        new Uint8Array(new Array(13).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    const [trackerStreakPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_streak"),
+        provider.wallet.publicKey.toBuffer(),
+        new Uint8Array(new Array(13).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    const [yesterdayTrackerStatsPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats"),
+        new Uint8Array(new Array(13).fill(trackerId)),
+        new Uint8Array(new Array(13).fill(normalizedYesterday)),
+      ],
+      program.programId
+    );
+
+    const [currentTrackerStatsPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats"),
+        new Uint8Array(new Array(13).fill(trackerId)),
+        new Uint8Array(new Array(13).fill(normalizedCurrentDate)),
+      ],
+      program.programId
+    );
+
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    // Add tracking data for yesterday
+    await program.methods
+      .addTrackingData(trackerId, count, new anchor.BN(normalizedYesterday))
+      .accounts({
+        trackingData: trackingDataPda,
+        tracker: trackerPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        trackerStats: yesterdayTrackerStatsPda,
+        trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
+      })
+      .rpc();
+
+    // Add tracking data for today
+    await program.methods
+      .addTrackingData(trackerId, count, new anchor.BN(normalizedCurrentDate))
+      .accounts({
+        trackingData: trackingDataPda,
+        tracker: trackerPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        trackerStats: currentTrackerStatsPda,
+        trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
+      })
+      .rpc();
+
+    // Get all tracker stats
+    const stats = await program.methods
+      .getAllTrackerStats(trackerId)
+      .accounts({
+        trackerStatsList: trackerStatsListPda,
+      })
+      .view();
+
+    // Verify the results
+    expect(stats).to.have.lengthOf(2);
+    
+    // Sort stats by date to ensure consistent order
+    stats.sort((a, b) => a.date.toNumber() - b.date.toNumber());
+    
+    // Verify yesterday's data
+    expect(stats[0].date.toNumber()).to.equal(normalizedYesterday);
+    expect(stats[0].trackerId).to.equal(trackerId);
+    expect(stats[0].totalCount).to.equal(count);
+    expect(stats[0].uniqueUsers).to.equal(1);
+    
+    // Verify today's data
+    expect(stats[1].date.toNumber()).to.equal(normalizedCurrentDate);
+    expect(stats[1].trackerId).to.equal(trackerId);
+    expect(stats[1].totalCount).to.equal(count);
+    expect(stats[1].uniqueUsers).to.equal(1);
   });
 });

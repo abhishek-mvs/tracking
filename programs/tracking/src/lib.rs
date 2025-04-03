@@ -82,12 +82,29 @@ pub mod tracking_system {
 
         // Update tracker stats for today
         let tracker_stats = &mut ctx.accounts.tracker_stats;
+        let tracker_stats_list = &mut ctx.accounts.tracker_stats_list;
+        
+        // Initialize tracker_stats_list if needed
+        if tracker_stats_list.tracker_id == 0 {
+            tracker_stats_list.tracker_id = tracker_id;
+        }
+
         if tracker_stats.tracker_id == 0 && tracker_stats.date == 0 {
             // Initialize the account if it's new
             tracker_stats.tracker_id = tracker_id;
             tracker_stats.date = normalized_date;
             tracker_stats.total_count = count;
             tracker_stats.unique_users = 1;
+            
+            // Add the date to the list if it's not already there
+            if !tracker_stats_list.stats.iter().any(|s| s.date == normalized_date) {
+                tracker_stats_list.stats.push(TrackerStatsAccount {
+                    tracker_id,
+                    date: normalized_date,
+                    total_count: count,
+                    unique_users: 1,
+                });
+            }
         } else {
             // Update existing account
             if tracker_stats.date != normalized_date {
@@ -107,6 +124,20 @@ pub mod tracking_system {
                         tracker_stats.unique_users += 1;
                     }
                 }
+            }
+            
+            // Update stats in tracker_stats_list
+            if let Some(stats_entry) = tracker_stats_list.stats.iter_mut().find(|s| s.date == normalized_date) {
+                stats_entry.total_count = tracker_stats.total_count;
+                stats_entry.unique_users = tracker_stats.unique_users;
+            } else {
+                // If entry doesn't exist, add it
+                tracker_stats_list.stats.push(TrackerStatsAccount {
+                    tracker_id,
+                    date: normalized_date,
+                    total_count: tracker_stats.total_count,
+                    unique_users: tracker_stats.unique_users,
+                });
             }
         }
 
@@ -139,8 +170,9 @@ pub mod tracking_system {
                     tracker_streak.longest_streak_date = normalized_date;
                 }
             } else if normalized_date > last_date + one_day {
-                // Streak broken, reset to 1
                 tracker_streak.streak = 1;
+            } else if count == 0 {
+               tracker_streak.streak = 0;
             }
             
             tracker_streak.last_streak_date = normalized_date;
@@ -220,6 +252,19 @@ pub mod tracking_system {
             longest_streak_date: ctx.accounts.tracker_streak.longest_streak_date,
         };
         Ok(streak_account)
+    }
+
+    // View function to get all dates and their corresponding stats PDAs for a tracker
+    pub fn get_all_tracker_stats(
+        ctx: Context<GetAllTrackerStats>,
+        tracker_id: u32,
+    ) -> Result<Vec<TrackerStatsAccount>> {
+        require!(
+            ctx.accounts.tracker_stats_list.tracker_id == tracker_id,
+            TrackingError::InvalidTrackerId
+        );
+
+        Ok(ctx.accounts.tracker_stats_list.stats.clone())
     }
 }
 
@@ -307,6 +352,15 @@ pub struct AddTrackingData<'info> {
     #[account(
         init_if_needed,
         payer = user,
+        space = 8 + TrackerStatsList::LEN,
+        seeds = [b"tracker_stats_list", &[tracker_id as u8; 18]],
+        bump
+    )]
+    pub tracker_stats_list: Account<'info, TrackerStatsList>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
         space = 8 + TrackerStreakAccount::LEN,
         seeds = [b"tracker_streak", user.key().as_ref(), &[tracker_id as u8; 13]],
         bump
@@ -364,6 +418,16 @@ pub struct GetUserStreak<'info> {
     pub tracker_streak: Account<'info, TrackerStreakAccount>,
     /// CHECK: This is the user whose streak we're retrieving
     pub user: AccountInfo<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(tracker_id: u32)]
+pub struct GetAllTrackerStats<'info> {
+    #[account(
+        seeds = [b"tracker_stats_list", &[tracker_id as u8; 18]],
+        bump
+    )]
+    pub tracker_stats_list: Account<'info, TrackerStatsList>,
 }
 
 #[account]
@@ -428,6 +492,24 @@ pub struct TrackerStreakAccount {
     pub longest_streak_date: u64,
 }
 
+#[account]
+pub struct TrackerStatsList {
+    pub tracker_id: u32,
+    pub stats: Vec<TrackerStatsAccount>,  // List of dates for which we have stats
+}
+
+
+impl TrackerStatsList {
+    pub const LEN: usize = 4 + // tracker_id
+        4 + // stats_dates vector length
+        8 * 100; // space for 100 dates initially
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct TrackerStatsDateInfo {
+    pub date: u64,
+    pub stats_pda: Pubkey,
+}
 
 #[error_code]
 pub enum TrackingError {
