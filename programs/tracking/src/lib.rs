@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("7TBRqAzFS8FLEjHU2ppAWkU4Um8kQeBztmkLZUNjTrKB");
+declare_id!("CPQaoTt3kXy5gHj6LbXsDy2Msp776SxDXzgzsKcq3HWE");
 
 #[program]
 pub mod tracking_system {
@@ -66,9 +66,9 @@ pub mod tracking_system {
         // Check if we already have an entry for this date
         let existing_index = tracking_data.tracks.iter().position(|t| t.date == normalized_date);
         
-        if let Some(index) = existing_index {
-            // Update existing entry
-            tracking_data.tracks[index].count = count;
+        if let Some(_) = existing_index {
+            // Return error if entry for this date already exists
+            return err!(TrackingError::TrackingDataAlreadyExists);
         } else {
             // Add new entry
             let track = Track {
@@ -515,6 +515,8 @@ pub struct TrackerStatsDateInfo {
 pub enum TrackingError {
     #[msg("Invalid tracker ID")]
     InvalidTrackerId,
+    #[msg("Tracking data already exists for this date")]
+    TrackingDataAlreadyExists,
 }
 
 impl TrackingData {

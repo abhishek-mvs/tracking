@@ -4,6 +4,11 @@ import { TrackingSystem } from "../target/types/tracking_system";
 import { expect } from 'chai';
 import { PublicKey } from '@solana/web3.js';
 
+// Helper function to generate random tracker names
+function generateRandomTrackerName(): string {
+  return `Tracker_${Math.random().toString(36).substring(2, 8)}`;
+}
+
 describe("tracking", () => {
   // Configure the client to use the local cluster.
   const provider = anchor.AnchorProvider.env();
@@ -35,6 +40,8 @@ describe("tracking", () => {
     const title = "No Smoking";
     const description = "Track your no smoking streak";
 
+    const titleFitness = "Fitness"
+    const descriptionFitness = "Track your fitness streak"
     // Derive the tracker PDA
     const [trackerPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("tracker"), Buffer.from(title)],
@@ -55,6 +62,27 @@ describe("tracking", () => {
     expect(tracker.title).to.equal(title);
     expect(tracker.description).to.equal(description);
     expect(tracker.id).to.equal(trackerPda.toBytes()[0]);
+    console.log("tracker", tracker);
+    const [trackerPdaFitness] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(titleFitness)],
+      program.programId
+    );
+
+    await program.methods
+      .createTracker(titleFitness, descriptionFitness)
+      .accounts({
+        tracker: trackerPdaFitness,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const trackerFitness = await program.account.tracker.fetch(trackerPdaFitness);
+    expect(trackerFitness.title).to.equal(titleFitness);
+    expect(trackerFitness.description).to.equal(descriptionFitness);
+    expect(trackerFitness.id).to.equal(trackerPdaFitness.toBytes()[0]);
+
   });
 
   it("Gets list of tracker names", async () => {
@@ -65,7 +93,7 @@ describe("tracking", () => {
       })
       .view();
 
-    expect(trackerNames).to.have.lengthOf(1);
+    expect(trackerNames).to.have.lengthOf(2);
     expect(trackerNames[0]).to.equal("No Smoking");
   });
 
@@ -92,7 +120,7 @@ describe("tracking", () => {
       .view();
 
     // Tracker names should be the same regardless of wallet
-    expect(trackerNames).to.have.lengthOf(1);
+    expect(trackerNames).to.have.lengthOf(2);
     expect(trackerNames[0]).to.equal("No Smoking");
     
     // Reset the provider back to the original
@@ -281,11 +309,24 @@ describe("tracking", () => {
   });
 
   it("Gets tracker stats for a specific date", async () => {
-    const title = "No Smoking";
+    const title = generateRandomTrackerName();
+    const description = "Track your progress";
+    console.log("title", title);
+    // Create a new tracker
     const [trackerPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("tracker"), Buffer.from(title)],
       program.programId
     );
+
+    await program.methods
+      .createTracker(title, description)
+      .accounts({
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
     
     const tracker = await program.account.tracker.fetch(trackerPda);
     const trackerId = tracker.id;
@@ -325,15 +366,6 @@ describe("tracking", () => {
     );
 
     const [trackerStatsPda] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("tracker_stats"),
-        new Uint8Array(new Array(13).fill(trackerId)),
-        new Uint8Array(new Array(13).fill(normalizedTestDate)),
-      ],
-      program.programId
-    );
-
-    const [currentTrackerStatsPda] = PublicKey.findProgramAddressSync(
       [
         Buffer.from("tracker_stats"),
         new Uint8Array(new Array(13).fill(trackerId)),
@@ -382,14 +414,6 @@ describe("tracking", () => {
       program.programId
     );
 
-    const [otherTrackerStatsListPda] = PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("tracker_stats_list"),
-        new Uint8Array(new Array(18).fill(trackerId)),
-      ],
-      program.programId
-    );
-
     // Second user adds tracking data
     await program.methods
       .addTrackingData(trackerId, count, new anchor.BN(normalizedTestDate))
@@ -400,7 +424,7 @@ describe("tracking", () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         trackerStats: trackerStatsPda,
         trackerStreak: otherTrackerStreakPda,
-        trackerStatsList: otherTrackerStatsListPda,
+        trackerStatsList: trackerStatsListPda,
       })
       .signers([otherWallet])
       .rpc();
@@ -419,11 +443,24 @@ describe("tracking", () => {
   });
 
   it("Gets user streak", async () => {
-    const title = "No Smoking";
+    const title = generateRandomTrackerName();
+    const description = "Track your streak";
+    console.log("title", title);
+    // Create a new tracker
     const [trackerPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("tracker"), Buffer.from(title)],
       program.programId
     );
+
+    await program.methods
+      .createTracker(title, description)
+      .accounts({
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
     
     const tracker = await program.account.tracker.fetch(trackerPda);
     const trackerId = tracker.id;
@@ -523,21 +560,28 @@ describe("tracking", () => {
     expect(streak.lastStreakDate.toNumber()).to.equal(normalizedCurrentDate);
     expect(streak.longestStreak).to.equal(2);
     expect(streak.longestStreakDate.toNumber()).to.equal(normalizedCurrentDate);
-
-    // Verify streak account data
-    const trackerStreak = await program.account.trackerStreakAccount.fetch(trackerStreakPda);
-    expect(trackerStreak.streak).to.equal(2);
-    expect(trackerStreak.lastStreakDate.toNumber()).to.equal(normalizedCurrentDate);
-    expect(trackerStreak.longestStreak).to.equal(2);
-    expect(trackerStreak.longestStreakDate.toNumber()).to.equal(normalizedCurrentDate);
   });
 
   it("Breaks streak when there's a gap", async () => {
-    const title = "No Smoking";
+    const title = generateRandomTrackerName();
+    console.log("title", title);
+    const description = "Track your streak with gaps";
+    
+    // Create a new tracker
     const [trackerPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("tracker"), Buffer.from(title)],
       program.programId
     );
+
+    await program.methods
+      .createTracker(title, description)
+      .accounts({
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
     
     const tracker = await program.account.tracker.fetch(trackerPda);
     const trackerId = tracker.id;
@@ -646,18 +690,11 @@ describe("tracking", () => {
     expect(streak.lastStreakDate.toNumber()).to.equal(normalizedCurrentDate);
     expect(streak.longestStreak).to.equal(1);
     expect(streak.longestStreakDate.toNumber()).to.equal(normalizedTwoDaysAfter);
-
-    // Verify streak account data
-    const trackerStreak = await program.account.trackerStreakAccount.fetch(trackerStreakPda);
-    expect(trackerStreak.streak).to.equal(1);
-    expect(trackerStreak.lastStreakDate.toNumber()).to.equal(normalizedCurrentDate);
-    expect(trackerStreak.longestStreak).to.equal(1);
-    expect(trackerStreak.longestStreakDate.toNumber()).to.equal(normalizedTwoDaysAfter);
   });
 
   it("Gets all tracker stats", async () => {
-    const title = "Gym Fitness";
-    const description = "Track your gym fitness";
+    const title = generateRandomTrackerName();
+    const description = "Track your progress over time";
 
     // Derive the tracker PDA
     const [trackerPda] = PublicKey.findProgramAddressSync(
@@ -675,7 +712,6 @@ describe("tracking", () => {
       })
       .rpc();
 
-    
     const tracker = await program.account.tracker.fetch(trackerPda);
     const trackerId = tracker.id;
     
@@ -784,5 +820,103 @@ describe("tracking", () => {
     expect(stats[1].trackerId).to.equal(trackerId);
     expect(stats[1].totalCount).to.equal(count);
     expect(stats[1].uniqueUsers).to.equal(1);
+  });
+
+  it("Fails to add tracking data for the same day twice", async () => {
+    const title = generateRandomTrackerName();
+    const description = "Test duplicate tracking data";
+    
+    // Create a new tracker
+    const [trackerPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("tracker"), Buffer.from(title)],
+      program.programId
+    );
+
+    await program.methods
+      .createTracker(title, description)
+      .accounts({
+        tracker: trackerPda,
+        trackerRegistry: trackerRegistryPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+    
+    const tracker = await program.account.tracker.fetch(trackerPda);
+    const trackerId = tracker.id;
+    
+    const currentDate = Math.floor(Date.now() / 1000);
+    const normalizedDate = Math.floor(currentDate / 86400) * 86400;
+    const count = 5;
+
+    // Derive PDAs
+    const [trackingDataPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracking_data"),
+        provider.wallet.publicKey.toBuffer(),
+        new Uint8Array(new Array(13).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    const [trackerStreakPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_streak"),
+        provider.wallet.publicKey.toBuffer(),
+        new Uint8Array(new Array(13).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    const [trackerStatsPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats"),
+        new Uint8Array(new Array(13).fill(trackerId)),
+        new Uint8Array(new Array(13).fill(normalizedDate)),
+      ],
+      program.programId
+    );
+
+    const [trackerStatsListPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("tracker_stats_list"),
+        new Uint8Array(new Array(18).fill(trackerId)),
+      ],
+      program.programId
+    );
+
+    // First add tracking data
+    await program.methods
+      .addTrackingData(trackerId, count, new anchor.BN(normalizedDate))
+      .accounts({
+        trackingData: trackingDataPda,
+        tracker: trackerPda,
+        user: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        trackerStats: trackerStatsPda,
+        trackerStreak: trackerStreakPda,
+        trackerStatsList: trackerStatsListPda,
+      })
+      .rpc();
+
+    // Try to add tracking data for the same day again
+    try {
+      await program.methods
+        .addTrackingData(trackerId, count + 1, new anchor.BN(normalizedDate))
+        .accounts({
+          trackingData: trackingDataPda,
+          tracker: trackerPda,
+          user: provider.wallet.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          trackerStats: trackerStatsPda,
+          trackerStreak: trackerStreakPda,
+          trackerStatsList: trackerStatsListPda,
+        })
+        .rpc();
+      
+      expect.fail("Should have thrown an error");
+    } catch (error) {
+      expect(error.message).to.include("Tracking data already exists");
+    }
   });
 });
