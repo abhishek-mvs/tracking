@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("CPQaoTt3kXy5gHj6LbXsDy2Msp776SxDXzgzsKcq3HWE");
+declare_id!("FfjNyygvYw56Qaq1MUj34U3nMb3uVb5NjCUjjRzMashR");
 
 #[program]
 pub mod tracking_system {
@@ -120,9 +120,8 @@ pub mod tracking_system {
                 } else {
                     // If adding a new entry, just add the count
                     tracker_stats.total_count += count;
-                    if is_new_user {
-                        tracker_stats.unique_users += 1;
-                    }
+                    tracker_stats.unique_users += 1;
+                    
                 }
             }
             
